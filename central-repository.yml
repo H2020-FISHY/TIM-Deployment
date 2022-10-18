@@ -1,0 +1,104 @@
+---
+apiVersion: v1
+data:
+  .dockerconfigjson: eyJhdXRocyI6eyJyZWdpc3RyeS1naXRsYWIueGxhYi5zaSI6eyJ1c2VybmFtZSI6ImZpc2h5LXhsYWItaW1hZ2VzIiwicGFzc3dvcmQiOiJpTi02S2RRU0RaejNBeDF4cDJ5TiIsImVtYWlsIjoiamFuLmFudGljQHhsYWIuc2kiLCJhdXRoIjoiWm1semFIa3RlR3hoWWkxcGJXRm5aWE02YVU0dE5rdGtVVk5FV25velFYZ3hlSEF5ZVU0PSJ9fX0=
+kind: Secret
+metadata:
+  name: central-repository-regcred
+type: kubernetes.io/dockerconfigjson
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: central-repository-rmq
+  labels:
+    app: central-repository-rmq
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: central-repository-rmq
+  template:
+    metadata:
+      labels:
+        app: central-repository-rmq
+    spec:
+      containers:
+      - name: central-repository-rmq
+        image: rabbitmq:alpine
+        ports:
+        - containerPort: 5672
+          name: rmq-container 
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: central-repository-rmq
+  labels:
+    app: central-repository-rmq
+spec:
+  ports:
+  - port: 5672
+    protocol: TCP
+    name: central-repository-rmq
+  selector:
+    app: central-repository-rmq
+  type: LoadBalancer
+
+# All services that want to connect to the Central Repository RabbitMQ
+# instance to use the pub/sub mechanism can use the environment variables
+# "CENTRAL_REPOSITORY_RMQ_SERVICE_HOST" for the address and
+# "CENTRAL_REPOSITORY_RMQ_SERVICE_PORT" for the port
+# no special user management has been performed, the default "guest/guest" user & pass
+# is active
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: central-repository
+  labels:
+    app: central-repository
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: central-repository
+  template:
+    metadata:
+      labels:
+        app: central-repository
+      annotations:
+        k8s.v1.cni.cncf.io/networks: vmgmtpod8@mgmt
+    spec:
+      imagePullSecrets:
+        - name: central-repository-regcred
+      containers:
+        - name: central-repository
+          image: registry-gitlab.xlab.si/fishy/appliance-poc/threat-attack-repository:v0.0.2
+          imagePullPolicy: Always
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN"]
+          ports:
+            - containerPort: 10010
+          env:
+            - name: INTERFACES_UP
+              value: "mgmt:192.168.5.2/24"
+            - name: GET_CONFIG_FROM_ENV
+              value: "True" 
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: central-repository
+spec:
+  ports:
+  - port: 10010
+    protocol: TCP
+    targetPort: 10010
+  selector:
+    app: central-repository
+  type: LoadBalancer
